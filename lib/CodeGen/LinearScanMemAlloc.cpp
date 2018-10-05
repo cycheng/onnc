@@ -13,7 +13,15 @@
 #include <onnc/Target/TargetBackend.h>
 #include <onnc/Target/TargetMemInfo.h>
 
+#include <onnc/Option/CommandLine.h>
+
 using namespace onnc;
+
+static cl::opt<bool>
+DisableOptimizingMemSize("ftreat-all-liveness-conflict",
+    cl::kLong, cl::kOptional, cl::kValueDisallowed,
+    cl::init(false),
+    cl::desc("Treat all liveness have conflicts."));
 
 /// Check if two segment A overlaps segment B.
 ///   segment A = [pStartA, pStartA + pSizeA)
@@ -50,6 +58,19 @@ Pass::ReturnType LinearScanMemAlloc::runOnModule(Module& pModule)
   m_LIPass = getAnalysis<LiveIntervals>();
   m_LiveMatPass = getAnalysis<LiveValueMatrix>();
   m_MemAllocData = getAnalysis<MemAllocData>();
+
+  if (DisableOptimizingMemSize) {
+    uint64_t startAddr = 0;
+    for (const LiveInterval* LI: m_LIPass->getSortedIntervals()) {
+      Value* v = const_cast<Value*>(LI->getValue());
+      // FIXME: Do we have safer casting? We should check before casting.
+      MemSize m = m_TMI->getTensorMemorySize(*(Tensor*)v);
+      startAddr = GetAlignedAddr(startAddr, m.alignment);
+      m_MemAllocData->addAlloc(v, AllocEntry(startAddr, m.size));
+      startAddr += m.size;
+    }
+    return Pass::kModuleNoChanged;
+  }
 
   // Allocate memory for each value (live interval).
   for (const LiveInterval* LI: m_LIPass->getSortedIntervals()) {
